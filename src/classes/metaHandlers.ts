@@ -4,6 +4,7 @@ import { chunkSize } from '@/utils/globalDefaults'
 import { intToHex, uintArrayToString } from '@/utils/converters'
 import { bufferToHex } from '@/utils/hash'
 import {
+  IExtendedMeta,
   IFileMeta,
   IFileMetaData,
   IFileMetaFoundationalData,
@@ -256,6 +257,7 @@ export class FolderMetaHandler implements IFolderMetaHandler {
 
 export class FileMetaHandler implements IFileMetaHandler {
   protected description: string
+  protected extended: IExtendedMeta
   protected fileMeta: IFileMeta
   protected location: string
   protected readonly merkleHex: string
@@ -267,6 +269,7 @@ export class FileMetaHandler implements IFileMetaHandler {
 
   protected constructor (source: IFileMetaFoundationalData) {
     this.description = source.description
+    this.extended = source.extendedMeta
     this.fileMeta = source.fileMeta
     this.location = source.location
     this.merkleHex = source.merkleHex
@@ -292,6 +295,7 @@ export class FileMetaHandler implements IFileMetaHandler {
     } else {
       const rdy: IFileMetaFoundationalData = {
         description: source.description || '',
+        extendedMeta: source.extendedMeta || {},
         fileMeta: source.fileMeta,
         location: `s/ulid/${source.location}`,
         merkleHex: '',
@@ -374,6 +378,7 @@ export class FileMetaHandler implements IFileMetaHandler {
   export (): IFileMetaData {
     return {
       description: this.description,
+      extendedMeta: this.extended || {},
       fileMeta: this.fileMeta,
       location: this.location,
       merkleHex: this.merkleHex,

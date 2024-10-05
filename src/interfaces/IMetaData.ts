@@ -90,6 +90,7 @@ export interface ICloneFileMetaDataSource {
 
 export interface INoCloneFileMetaDataSource {
   description?: string
+  extendedMeta?: IExtendedMeta
   file?: File
   fileMeta: IFileMeta
   legacyMerkles?: Uint8Array[]
@@ -104,7 +105,7 @@ export type TFileMetaDataSource = ICloneFileMetaDataSource | INoCloneFileMetaDat
 export interface IFileMetaFoundationalData {
   description: string
   fileMeta: IFileMeta
-  extended: IExtendedMeta
+  extendedMeta: IExtendedMeta
   location: string
   merkleHex: string
   merkleMem: string
@@ -116,6 +117,7 @@ export interface IFileMetaFoundationalData {
 
 export interface IFileMetaData extends IBaseMetaData {
   description: string
+  extendedMeta: IExtendedMeta
   fileMeta: IFileMeta
   metaDataType: 'file'
   merkleMem: string

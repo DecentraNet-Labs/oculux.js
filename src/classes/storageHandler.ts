@@ -26,6 +26,7 @@ import {
   ICreateFolderOptions,
   IDeleteTargetOptions,
   IDownloadTracker,
+  IExtendedMeta,
   IFileMetaData,
   IFileParticulars,
   IFileTreePackage,
@@ -1692,6 +1693,7 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
   protected async processPrivate (
     toProcess: File,
     duration: number,
+    extendedMeta?: IExtendedMeta
   ): Promise<IUploadPackage> {
     try {
       const aes: IAesBundle = {
@@ -1716,6 +1718,7 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
       console.log(ulid)
       const baseMeta = await FileMetaHandler.create({
         description: '',
+        extendedMeta,
         file,
         fileMeta,
         location: this.readCurrentUlid(),
@@ -1737,11 +1740,13 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
   protected async processPublic (
     toProcess: File,
     duration: number,
+    extendedMeta?: IExtendedMeta
   ): Promise<IUploadPackage> {
     try {
       const fileMeta = extractFileMetaData(toProcess)
       const baseMeta = await FileMetaHandler.create({
         description: '',
+        extendedMeta,
         file: toProcess,
         fileMeta,
         location: this.readCurrentLocation(),
