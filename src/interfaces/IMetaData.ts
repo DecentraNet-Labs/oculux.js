@@ -13,6 +13,10 @@ export interface IFileMeta {
   type: string
 }
 
+export interface IExtendedMeta {
+  [k: string]: any
+}
+
 export interface ILegacyFolderMetaData {
   dirChildren: string[]
   fileChildren: Record<string, IFileMeta>
@@ -100,6 +104,7 @@ export type TFileMetaDataSource = ICloneFileMetaDataSource | INoCloneFileMetaDat
 export interface IFileMetaFoundationalData {
   description: string
   fileMeta: IFileMeta
+  extended: IExtendedMeta
   location: string
   merkleHex: string
   merkleMem: string

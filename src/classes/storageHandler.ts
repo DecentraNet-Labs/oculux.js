@@ -351,6 +351,13 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
 
   /**
    *
+   */
+  getChildren(): IChildMetaDataMap {
+    return this.children
+  }
+
+  /**
+   *
    * @returns {Promise<void>}
    */
   async upgradeSigner (): Promise<void> {
@@ -805,6 +812,21 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
 
   /**
    *
+   * @returns {IUploadPackage[]}
+   */
+  getCurrentQueue(): IUploadPackage[] {
+    return this.uploadQueue
+  }
+
+  /**
+   *
+   */
+  getCurrentMeta(): IFolderMetaHandler {
+    return this.meta
+  }
+
+  /**
+   *
    * @param {string} name
    */
   removeFromQueue (name: string): void {
@@ -815,6 +837,13 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
       }
     }
     this.uploadQueue = filtered
+  }
+
+  /**
+   *
+   */
+  clearQueue(): void {
+    this.uploadQueue = []
   }
 
   /**
@@ -1379,7 +1408,7 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
    * @returns {Promise<IProviderUploadResponse>}
    * @protected
    */
-  protected async uploadFile (
+  async uploadFile (
     url: string,
     startBlock: number,
     file: File,
