@@ -119,4 +119,10 @@ export interface IStorageHandler {
   readSharing (): TSharedRootMetaDataMap
 
   convert (options?: IBroadcastOrChainOptions): Promise<IWrappedEncodeObject[]>
+
+  checkIfUpcycle (): boolean
+
+  checkAndUpcycle (options?: IBroadcastOptions): Promise<void>
+
+  runUpcycleQueue (options?: IBroadcastOptions): Promise<void>
 }

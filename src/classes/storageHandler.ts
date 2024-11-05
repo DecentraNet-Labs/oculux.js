@@ -11,7 +11,7 @@ import { isItPastDate, shuffleArray, signerNotEnabled, tidyString, warnError } f
 import { FileMetaHandler, FolderMetaHandler, NullMetaHandler } from '@/classes/metaHandlers'
 import { encryptionChunkSize, signatureSeed } from '@/utils/globalDefaults'
 import { aesBlobCrypt, genAesBundle, genIv, genKey } from '@/utils/crypt'
-import { hashAndHex, stringToShaHex } from '@/utils/hash'
+import { hashAndHex, hexToBuffer, stringToShaHex } from '@/utils/hash'
 import { EncodingHandler } from '@/classes/encodingHandler'
 import { SharedUpdater } from '@/classes/sharedUpdater'
 import { bech32 } from '@jackallabs/bech32'
@@ -66,6 +66,7 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
   protected stagedUploads: Record<string, IStagedUploadPackage>
   protected children: IChildMetaDataMap
   protected shared: TSharedRootMetaDataMap
+  protected upcycleQueue: IWrappedEncodeObject[]
 
   protected meta: IFolderMetaHandler
   protected providers: IProviderPool
@@ -77,10 +78,11 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
     hostSigner: THostSigningClient,
     accountAddress: string,
     fullSignerState: TFullSignerState,
+    defaultKeyPair: PrivateKey,
     path: string,
     meta: IFolderMetaHandler,
   ) {
-    super(client, jackalSigner, hostSigner, fullSignerState[0], accountAddress)
+    super(client, jackalSigner, hostSigner, fullSignerState[0], defaultKeyPair, accountAddress)
 
     this.rns = rns
     this.path = path
@@ -100,6 +102,7 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
     }
     this.mustConvert = false
     this.shared = {}
+    this.upcycleQueue = []
 
     this.meta = meta
     this.providers = {}
@@ -135,7 +138,8 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
 
     try {
       let dummyKey = await stringToShaHex('')
-      let keyPair: TFullSignerState = [PrivateKey.fromHex(dummyKey), false]
+      let defaultKeyPair = PrivateKey.fromHex(dummyKey)
+      let keyPair: TFullSignerState = [defaultKeyPair, false]
       if (setFullSigner) {
         keyPair = await this.enableFullSigner(client)
       }
@@ -151,6 +155,7 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
         hostSigner,
         accountAddress,
         keyPair,
+        defaultKeyPair,
         path,
         meta,
       )
@@ -188,32 +193,36 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
 
       const hostAddress = client.getHostAddress()
       const chainId = client.getHostChainId()
-      let signatureAsHex = ''
+      let signed, signatureAsHex
       switch (selectedWallet) {
         case 'keplr':
           if (!window.keplr) {
             throw 'Missing wallet extension'
           } else {
-            const { signature } = await window.keplr.signArbitrary(
+            signed = await window.keplr.signArbitrary(
               chainId,
               hostAddress,
               signatureSeed,
             )
-            signatureAsHex = await stringToShaHex(signature)
+            signatureAsHex = await stringToShaHex(signed.signature)
           }
           break
         case 'leap':
           if (!window.leap) {
             throw 'Missing wallet extension'
           } else {
-            const { signature } = await window.leap.signArbitrary(
+            signed = await window.leap.signArbitrary(
               chainId,
               hostAddress,
               signatureSeed,
             )
-            signatureAsHex = await stringToShaHex(signature)
+            signatureAsHex = await stringToShaHex(signed.signature)
           }
           break
+        default:
+          throw new Error(
+            'No wallet selected but one is required to init StorageHandler',
+          )
       }
       return [PrivateKey.fromHex(signatureAsHex), true]
     } catch (err) {
@@ -363,9 +372,12 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
    */
   async upgradeSigner (): Promise<void> {
     try {
-      ;[this.keyPair, this.fullSigner] = await StorageHandler.enableFullSigner(
+      const [pair, signer] = await StorageHandler.enableFullSigner(
         this.jackalClient,
       )
+      this.keyPair = pair
+      this.fullSigner = signer
+      await this.resetReader(pair)
     } catch (err) {
       throw warnError('storageHandler upgradeSigner()', err)
     }
@@ -1021,10 +1033,16 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
     }
     try {
       const particulars = await this.getFileParticulars(filePath)
+      if (particulars.providerIps.length === 0) {
+        throw new Error('No providers found')
+      }
       const providerList = shuffleArray(particulars.providerIps)
       for (const _ of providerList) {
         const provider =
           providerList[Math.floor(Math.random() * providerList.length)]
+        if (typeof provider === 'undefined') {
+          continue
+        }
         const url = `${provider}/download/${particulars.merkleLocation}`
         try {
           const resp = await fetch(url, { method: 'GET' })
@@ -1260,6 +1278,187 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
 
   /**
    *
+   * @returns {boolean}
+   */
+  checkIfUpcycle (): boolean {
+    const len = this.reader.getConversionQueueLength()
+    console.log('ConversionQueueLength:', len)
+    return len > 0
+  }
+
+  /**
+   *
+   * @param {IBroadcastOptions} [options]
+   * @returns {Promise<void>}
+   */
+  async checkAndUpcycle (options?: IBroadcastOptions): Promise<void> {
+    try {
+      if (this.reader.getConversionQueueLength() > 0) {
+        const msgs: IWrappedEncodeObject[] = []
+        const prep = await this.reader.getConversions()
+        const blockheight = await this.jackalClient.getJackalBlockHeight()
+
+        for (let one of prep) {
+          let upcycleMsgs
+          switch (one[0]) {
+            case 'file':
+              try {
+                const pkg = await this.upcycleFile(one[1])
+                const { files } =
+                  await this.jackalSigner.queries.storage.allFilesByMerkle({
+                    merkle: one[1].export().merkleRoot,
+                  })
+                const [details] = files
+                const sourceMsgs = this.fileDeleteToMsgs({
+                  creator: this.jklAddress,
+                  merkle: details.merkle,
+                  start: details.start,
+                })
+                upcycleMsgs = await this.pkgToMsgs(pkg, blockheight)
+                msgs.push(...sourceMsgs, ...upcycleMsgs)
+              } catch {
+                console.log(`Skipping ${one[1].export().fileMeta.name}`)
+              }
+              break
+            case 'null':
+              upcycleMsgs = await this.filetreeDeleteToMsgs({ meta: one[1], aes: await genAesBundle() })
+              msgs.push(...upcycleMsgs)
+              break
+            case 'folder':
+              upcycleMsgs = await this.folderToMsgs({ meta: one[1], aes: await genAesBundle() })
+              msgs.push(...upcycleMsgs)
+              break
+            case 'rootlookup':
+              upcycleMsgs = await this.upcycleBaseFolderToMsgs({ meta: one[1], aes: await genAesBundle() })
+              msgs.push(...upcycleMsgs)
+              break
+          }
+        }
+        const ready = confirm('Are you ready to Upcycle?')
+        this.upcycleQueue = msgs
+        if (ready) {
+          await this.runUpcycleQueue(options)
+        }
+      }
+    } catch (err) {
+      throw warnError('storageHandler checkAndUpcycle()', err)
+    }
+  }
+
+  /**
+   *
+   * @param {IBroadcastOptions} [options]
+   * @returns {Promise<void>}
+   */
+  async runUpcycleQueue (options?: IBroadcastOptions): Promise<void> {
+    try {
+      const postBroadcast =
+        await this.jackalClient.broadcastAndMonitorMsgs(this.upcycleQueue, options)
+      console.log('runUpcycleQueue:', postBroadcast)
+      if (!postBroadcast.error) {
+        if (!postBroadcast.txEvents.length) {
+          throw Error('tx has no events')
+        }
+        let remaining = [...this.upcycleQueue]
+        const uploadHeight = postBroadcast.txEvents[0].height
+        while (remaining.length > 0) {
+          const activeUploads = await this.batchUploads(remaining, uploadHeight)
+          const results = await Promise.allSettled(activeUploads)
+
+          const loop: IWrappedEncodeObject[] = []
+          for (let i = 0; i < results.length; i++) {
+            if (results[i].status === 'rejected') {
+              loop.push(remaining[i])
+            }
+          }
+          remaining = [...loop]
+        }
+      }
+      this.upcycleQueue = []
+    } catch (err) {
+      throw warnError('storageHandler runUpcycleQueue()', err)
+    }
+  }
+
+  /**
+   *
+   * @param {FileMetaHandler} source
+   * @returns {Promise<IUploadPackage>}
+   * @protected
+   */
+  protected async upcycleFile (source: FileMetaHandler): Promise<IUploadPackage> {
+    try {
+      const sourceMeta = source.export()
+      const { providerIps } = await this.jackalSigner.queries.storage.findFile({
+        merkle: sourceMeta.merkleRoot,
+      })
+      console.log('providerIps:', providerIps)
+      let baseFile
+      for (let i = 0; i < providerIps.length; i++) {
+        const provider = providerIps[0]
+        const url = `${provider}/download/${sourceMeta.merkleHex}`
+        try {
+          const resp = await fetch(url, { method: 'GET' })
+          const contentLength = resp.headers.get('Content-Length')
+          if (resp.status !== 200 || resp.body === null || !contentLength) {
+            throw new Error('Download failed')
+          } else {
+            const reader = resp.body.getReader()
+            const chunks = []
+            let receivedLength = 0
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) {
+                break
+              }
+              chunks.push(value)
+              receivedLength += value.length
+            }
+            const { name, ...meta } = sourceMeta.fileMeta
+            baseFile = new File(chunks, name, meta)
+            const tmp = await baseFile.slice(0, 8).text()
+            if (Number(tmp) > 0) {
+              const parts: Blob[] = []
+              const aes = await this.reader.loadKeysByUlid(
+                source.getUlid(),
+                this.jklAddress,
+              )
+              for (let i = 0; i < baseFile.size;) {
+                const offset = i + 8
+                const segSize = Number(await baseFile.slice(i, offset).text())
+                const last = offset + segSize
+                const segment = baseFile.slice(offset, last)
+
+                parts.push(await aesBlobCrypt(segment, aes, 'decrypt'))
+                i = last
+              }
+              baseFile = new File(parts, name, meta)
+            }
+          }
+        } catch (err) {
+          console.warn(`Error fetching ${sourceMeta.fileMeta.name} from provider ${provider}: ${err}`)
+        }
+      }
+      if (!baseFile) {
+        throw new Error('Download failed')
+      }
+      const pkg = await this.processPrivate(baseFile, 0)
+      pkg.meta = await FileMetaHandler.create({
+        clone: {
+          ...pkg.meta.export(),
+          location: source.getLocation(),
+          ulid: source.getUlid(),
+        },
+        refIndex: source.getRefIndex(),
+      })
+      return pkg
+    } catch (err) {
+      throw warnError('storageHandler upcycleFile()', err)
+    }
+  }
+
+  /**
+   *
    * @param {IMoveRenameTarget} target
    * @param {string} movedTo
    * @returns {Promise<IFileTreePackage>}
@@ -1345,6 +1544,21 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
 
   /**
    *
+   * @returns {Promise<IProviderIpSet>}
+   * @protected
+   */
+  protected async getAllProviders (): Promise<IProviderIpSet> {
+    try {
+      const providers = await this.getAvailableProviders()
+      // console.log(providers)
+      return await this.findProviderIps(providers)
+    } catch (err) {
+      throw warnError('storageHandler getAllProviders()', err)
+    }
+  }
+
+  /**
+   *
    * @param {IWrappedEncodeObject[]} msgs
    * @param {number} uploadHeight
    * @returns {Promise<Promise<IProviderUploadResponse>[]>}
@@ -1356,10 +1570,8 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
   ): Promise<Promise<IProviderUploadResponse>[]> {
     try {
       const activeUploads: Promise<IProviderUploadResponse>[] = []
-
       const providerTeams = Object.keys(this.providers)
       const copies = Math.min(3, providerTeams.length)
-
       for (let i = 0; i < msgs.length; i++) {
         if (!msgs[i]) {
           warnError('storageHandler batchUploads()', `msg at ${i} is undefined`)
@@ -1368,29 +1580,42 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
         const { file, merkle } = msgs[i]
         if (file && merkle) {
           this.uploadsInProgress = true
-
-          const used: number[] = []
-          for (let i = 0; i < copies; i++) {
-            while (true) {
-              const seed = Math.floor(Math.random() * providerTeams.length)
-              if (used.includes(seed)) {
-              } else {
-                used.push(seed)
-                break
-              }
+          const { providerIps } = await this.jackalSigner.queries.storage.findFile({
+            merkle: hexToBuffer(merkle),
+          })
+          if (providerIps.length >= copies) {
+            const fakeResponse: IProviderUploadResponse = {
+              merkle:  hexToBuffer(merkle),
+              owner: this.jklAddress,
+              start: uploadHeight,
             }
-            const [seed] = used.slice(-1)
-            const selected = this.providers[providerTeams[seed]]
-            const one = selected[Math.floor(Math.random() * selected.length)]
-            const uploadUrl = `${one.ip}/upload`
-
-            const uploadPromise = this.uploadFile(
-              uploadUrl,
-              uploadHeight,
-              file,
-              merkle,
-            )
-            activeUploads.push(uploadPromise)
+            const ready: Promise<IProviderUploadResponse> = new Promise((resolve) => {
+              resolve(fakeResponse)
+            })
+            activeUploads.push(ready)
+          } else {
+            const used: number[] = []
+            for (let i = 0; i < copies; i++) {
+              while (true) {
+                const seed = Math.floor(Math.random() * providerTeams.length)
+                if (used.includes(seed)) {
+                } else {
+                  used.push(seed)
+                  break
+                }
+              }
+              const [seed] = used.slice(-1)
+              const selected = this.providers[providerTeams[seed]]
+              const one = selected[Math.floor(Math.random() * selected.length)]
+              const uploadUrl = `${one.ip}/upload`
+              const uploadPromise = this.uploadFile(
+                uploadUrl,
+                uploadHeight,
+                file,
+                merkle,
+              )
+              activeUploads.push(uploadPromise)
+            }
           }
         }
       }
@@ -1881,11 +2106,12 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
             parent.getUlid(),
             fileMeta,
           )
+          const aes = await this.reader.loadKeysByPath(path, this.hostAddress)
           const pkg: IUploadPackage = {
             file: new File([], ''),
             meta,
             duration: 0,
-            aes: await genAesBundle(),
+            aes,
           }
           const group = await this.legacyPkgToMsgs(pkg)
           msgs.push(...group)
