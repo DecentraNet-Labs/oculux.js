@@ -6,6 +6,7 @@ import {
   ICreateFolderOptions,
   IDeleteTargetOptions,
   IDownloadTracker,
+  IExtendedMeta,
   IFileMetaData,
   IFileParticulars,
   IFolderMetaData,
@@ -85,9 +86,9 @@ export interface IStorageHandler {
 
   clearQueue(): void
 
-  queuePrivate (toQueue: File | File[], duration?: number): Promise<number>
+  queuePrivate (toQueue: File | File[], duration?: number, extendedMeta?: IExtendedMeta): Promise<number>
 
-  queuePublic (toQueue: File | File[], duration?: number): Promise<number>
+  queuePublic (toQueue: File | File[], duration?: number, extendedMeta?: IExtendedMeta): Promise<number>
 
   processAllQueues (options?: IBroadcastOptions): Promise<void>
 

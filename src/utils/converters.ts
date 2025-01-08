@@ -240,8 +240,8 @@ export async function maybeMakeThumbnail (source: File): Promise<string> {
   }
 }
 
-function extractThumbnailFromVideo (file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
+async function extractThumbnailFromVideo (file: File): Promise<string> {
+  const processor: Promise<string> = new Promise((resolve, reject) => {
     const video = document.createElement('video')
 
     video.src = URL.createObjectURL(file)
@@ -289,6 +289,12 @@ function extractThumbnailFromVideo (file: File): Promise<string> {
 
     video.onerror = reject
   })
+  try {
+    return await processor
+  } catch (err) {
+    warnError('extractThumbnailFromVideo()', err)
+    return ''
+  }
 }
 
 function convertToWebP (file: File): Promise<string> {

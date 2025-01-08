@@ -868,6 +868,7 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
   async queuePrivate (
     toQueue: File | File[],
     duration: number = 0,
+    extendedMeta: IExtendedMeta
   ): Promise<number> {
     if (
       await this.checkLocked({ noConvert: true, exists: true, signer: true })
@@ -877,11 +878,11 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
     try {
       if (toQueue instanceof Array) {
         for (let file of toQueue) {
-          this.uploadQueue.push(await this.processPrivate(file, duration))
+          this.uploadQueue.push(await this.processPrivate(file, duration, extendedMeta))
         }
         return toQueue.length
       } else {
-        this.uploadQueue.push(await this.processPrivate(toQueue, duration))
+        this.uploadQueue.push(await this.processPrivate(toQueue, duration, extendedMeta))
         return 1
       }
     } catch (err) {
@@ -1933,7 +1934,9 @@ export class StorageHandler extends EncodingHandler implements IStorageHandler {
           await aesBlobCrypt(blobChunk, aes, 'encrypt'),
         )
       }
+      console.debug("[JS DEBUG] <processPrivate> Extracting file metadata...")
       const fileMeta = extractFileMetaData(toProcess)
+      console.debug("[JS DEBUG] <processPrivate> fileMeta:", fileMeta)
       const finalName = await hashAndHex(fileMeta.name + Date.now().toString())
       const file = new File(encryptedArray, finalName, { type: 'text/plain' })
 
