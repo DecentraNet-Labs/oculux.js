@@ -7,7 +7,7 @@ export const signatureSeed: string =
   'Initiate Jackal Session' /* Don't ever change this! */
 export const chunkSize: number = 10240 /* In bytes. Don't ever change this! */
 export const encryptionChunkSize: number =
-  32 * Math.pow(1024, 2) /* In bytes. This number can change */
+  8 * Math.pow(1024, 2) /* In bytes. This number can change */
 export const assumedBlockTime: number = 6 /* In seconds. This number can change but shouldn't be */
 
 export const jackalTestnetRpc: string =

@@ -1,6 +1,6 @@
 {
-  "name": "@jackallabs/jackal.js",
-  "version": "3.4.0",
+  "name": "@oculux/oculux.js",
+  "version": "0.0.2",
   "description": "Javascript library for interacting with the Jackal Chain",
   "keywords": [
     "jackal",
